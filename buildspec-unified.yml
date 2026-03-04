@@ -166,9 +166,24 @@ phases:
         elif [ "$DEPLOYMENT_TYPE" = "pdf2pdf" ]; then
           echo "Deploying PDF-to-PDF Remediation Solution..."
           echo "Deploying CDK stacks with retry logic..."
+          
+          # Build CDK deploy command with optional VPC ID
+          CDK_DEPLOY_CMD="cdk deploy --all --require-approval never"
+          if [ -n "$VPC_ID" ]; then
+            echo "Using existing VPC: $VPC_ID"
+            CDK_DEPLOY_CMD="$CDK_DEPLOY_CMD --context vpc_id=$VPC_ID"
+            
+            if [ -n "$SUBNET_IDS" ]; then
+              echo "Using private subnets: $SUBNET_IDS"
+              CDK_DEPLOY_CMD="$CDK_DEPLOY_CMD --context subnet_ids=$SUBNET_IDS"
+            fi
+          else
+            echo "No VPC_ID provided, CDK will create a new VPC"
+          fi
+          
           for i in {1..3}; do
             echo "CDK deploy attempt $i/3..."
-            if cdk deploy --all --require-approval never; then
+            if eval $CDK_DEPLOY_CMD; then
               echo "CDK deploy successful on attempt $i"
               break
             else

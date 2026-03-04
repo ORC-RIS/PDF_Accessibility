@@ -113,6 +113,97 @@ deploy_backend_solution() {
         rm -f client_credentials.json
         echo ""
         
+        # VPC Configuration
+        print_status "🌐 VPC Configuration..."
+        echo ""
+        echo "Would you like to use an existing VPC? (Recommended to avoid creating new NAT Gateway)"
+        echo "If you choose 'no', a new VPC will be created (~$32-40/month for NAT Gateway)"
+        echo ""
+        
+        while true; do
+            read -p "Use existing VPC? (y/n): " USE_EXISTING_VPC
+            case $USE_EXISTING_VPC in
+                [Yy]*)
+                    read -p "Enter your VPC ID (e.g., vpc-xxxxx): " VPC_ID
+                    if [ -z "$VPC_ID" ]; then
+                        print_error "VPC ID cannot be empty. Please try again."
+                        continue
+                    fi
+                    
+                    # Validate VPC exists
+                    print_status "Validating VPC ID..."
+                    if aws ec2 describe-vpcs --vpc-ids "$VPC_ID" --region $REGION >/dev/null 2>&1; then
+                        print_success "✅ VPC $VPC_ID found and validated!"
+                        echo ""
+                        
+                        # Get private subnet IDs
+                        print_status "📋 ECS tasks need to run in private subnets with internet access (via NAT Gateway or VPC Endpoints)"
+                        echo ""
+                        echo "Please provide private subnet IDs for ECS tasks:"
+                        echo "  • These subnets should have routes to a NAT Gateway OR VPC Endpoints for ECR/S3"
+                        echo "  • Provide at least 2 subnet IDs in different AZs (comma-separated)"
+                        echo "  • Example: subnet-abc123,subnet-def456"
+                        echo ""
+                        
+                        # List available subnets to help the user
+                        print_status "Available subnets in VPC $VPC_ID:"
+                        aws ec2 describe-subnets --filters "Name=vpc-id,Values=$VPC_ID" \
+                            --query 'Subnets[*].[SubnetId,AvailabilityZone,CidrBlock,Tags[?Key==`Name`].Value|[0]]' \
+                            --output table 2>/dev/null || print_warning "Could not list subnets"
+                        echo ""
+                        
+                        while true; do
+                            read -p "Enter private subnet IDs (comma-separated): " SUBNET_IDS
+                            if [ -z "$SUBNET_IDS" ]; then
+                                print_error "Subnet IDs cannot be empty. Please try again."
+                                continue
+                            fi
+                            
+                            # Validate subnet IDs
+                            print_status "Validating subnet IDs..."
+                            IFS=',' read -ra SUBNET_ARRAY <<< "$SUBNET_IDS"
+                            
+                            if [ ${#SUBNET_ARRAY[@]} -lt 2 ]; then
+                                print_error "Please provide at least 2 subnet IDs in different AZs for high availability."
+                                continue
+                            fi
+                            
+                            VALID_SUBNETS=true
+                            for subnet in "${SUBNET_ARRAY[@]}"; do
+                                subnet=$(echo "$subnet" | xargs) # trim whitespace
+                                if ! aws ec2 describe-subnets --subnet-ids "$subnet" --region $REGION >/dev/null 2>&1; then
+                                    print_error "Subnet $subnet not found in region $REGION"
+                                    VALID_SUBNETS=false
+                                    break
+                                fi
+                            done
+                            
+                            if [ "$VALID_SUBNETS" = true ]; then
+                                print_success "✅ All subnet IDs validated!"
+                                echo ""
+                                break
+                            fi
+                        done
+                        
+                        break
+                    else
+                        print_error "VPC $VPC_ID not found in region $REGION. Please check the VPC ID and try again."
+                        continue
+                    fi
+                    ;;
+                [Nn]*)
+                    VPC_ID=""
+                    SUBNET_IDS=""
+                    print_warning "⚠️  A new VPC will be created (includes NAT Gateway cost)"
+                    echo ""
+                    break
+                    ;;
+                *)
+                    print_error "Please answer yes (y) or no (n)."
+                    ;;
+            esac
+        done
+        
     elif [ "$DEPLOYMENT_TYPE" == "pdf2html" ]; then
         print_status "🧠 PDF-to-HTML specific configuration..."
         echo ""
@@ -431,13 +522,13 @@ EOF
         BUILD_IMAGE="aws/codebuild/amazonlinux-x86_64-standard:5.0"
         COMPUTE_TYPE="BUILD_GENERAL1_SMALL"
         PRIVILEGED_MODE="true"
-        SOURCE_VERSION="main"
+        SOURCE_VERSION="rci-main"
         BUILDSPEC_FILE="buildspec-unified.yml"
     else
         BUILD_IMAGE="aws/codebuild/amazonlinux2-x86_64-standard:5.0"
         COMPUTE_TYPE="BUILD_GENERAL1_LARGE"
         PRIVILEGED_MODE="true"
-        SOURCE_VERSION="main"
+        SOURCE_VERSION="rci-main"
         BUILDSPEC_FILE="buildspec-unified.yml"
     fi
 
@@ -454,9 +545,25 @@ EOF
             {\"name\": \"BDA_PROJECT_ARN\", \"value\": \"$BDA_PROJECT_ARN\"}
         ]"
     else
-        ENV_VARS="[
-            {\"name\": \"DEPLOYMENT_TYPE\", \"value\": \"$DEPLOYMENT_TYPE\"}
-        ]"
+        # PDF-to-PDF environment variables
+        if [ -n "$VPC_ID" ]; then
+            if [ -n "$SUBNET_IDS" ]; then
+                ENV_VARS="[
+                    {\"name\": \"DEPLOYMENT_TYPE\", \"value\": \"$DEPLOYMENT_TYPE\"},
+                    {\"name\": \"VPC_ID\", \"value\": \"$VPC_ID\"},
+                    {\"name\": \"SUBNET_IDS\", \"value\": \"$SUBNET_IDS\"}
+                ]"
+            else
+                ENV_VARS="[
+                    {\"name\": \"DEPLOYMENT_TYPE\", \"value\": \"$DEPLOYMENT_TYPE\"},
+                    {\"name\": \"VPC_ID\", \"value\": \"$VPC_ID\"}
+                ]"
+            fi
+        else
+            ENV_VARS="[
+                {\"name\": \"DEPLOYMENT_TYPE\", \"value\": \"$DEPLOYMENT_TYPE\"}
+            ]"
+        fi
     fi
 
     ENVIRONMENT=$(echo "$ENVIRONMENT" | jq --argjson envvars "$ENV_VARS" '.environmentVariables = $envvars')
@@ -844,10 +951,16 @@ echo ""
 
 # Verify AWS credentials and get region (common for both solutions)
 print_status "🔍 Verifying AWS credentials..."
-ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text 2>/dev/null || {
+set +e  # Temporarily disable exit on error
+ACCOUNT_ID=$(aws sts get-caller-identity --query "Account" --output text 2>&1)
+AWS_EXIT_CODE=$?
+set -e  # Re-enable exit on error
+
+if [ $AWS_EXIT_CODE -ne 0 ] || [ -z "$ACCOUNT_ID" ]; then
     print_error "Failed to get AWS account ID. Please ensure AWS CLI is configured."
+    print_error "Error details: $ACCOUNT_ID"
     exit 1
-})
+fi
 
 # Get current region from environment variable (CloudShell region)
 REGION=$AWS_DEFAULT_REGION
@@ -872,7 +985,7 @@ print_success "✅ AWS credentials verified. Account: $ACCOUNT_ID, Region: $REGI
 echo ""
 
 # GitHub repository URL (hardcoded)
-GITHUB_URL="https://github.com/ASUCICREPO/PDF_Accessibility.git"
+GITHUB_URL="https://github.com/ORC-RIS/PDF_Accessibility.git"
 print_success "   Repository: $GITHUB_URL ✅"
 echo ""
 

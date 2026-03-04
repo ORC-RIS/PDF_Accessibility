@@ -55,34 +55,79 @@ class PDFAccessibility(Stack):
                                                              ),
                                                              outputs=["type=image,compression=zstd,compression-level=3,force-compression=true"])
 
-        # VPC with Public and Private Subnets
-        pdf_processing_vpc = ec2.Vpc(self, "PdfProcessingVpc",
-            max_azs=2,
-            nat_gateways=1,
-            subnet_configuration=[
-                ec2.SubnetConfiguration(
-                    subnet_type=ec2.SubnetType.PUBLIC,
-                    name="PdfProcessingPublic",
-                    cidr_mask=24,
-                ),
-                ec2.SubnetConfiguration(
-                    subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
-                    name="PdfProcessingPrivate",
-                    cidr_mask=24,
-                ),
-            ]
-        )
+        # VPC Configuration - Use existing VPC or create new one
+        # Check if VPC_ID is provided as a context variable
+        vpc_id = self.node.try_get_context("vpc_id")
+        subnet_ids_str = self.node.try_get_context("subnet_ids")
+        
+        if vpc_id:
+            # Use existing VPC
+            print(f"Using existing VPC: {vpc_id}")
+            pdf_processing_vpc = ec2.Vpc.from_lookup(self, "ExistingVpc",
+                vpc_id=vpc_id
+            )
+            print(f"VPC lookup complete. Available AZs: {len(pdf_processing_vpc.availability_zones)}")
+            
+            # Configure subnet selection for existing VPC
+            if subnet_ids_str:
+                # User provided specific subnet IDs
+                subnet_ids = [s.strip() for s in subnet_ids_str.split(',')]
+                print(f"Using user-specified subnets: {subnet_ids}")
+                ecs_subnet_selection = ec2.SubnetSelection(
+                    subnets=[ec2.Subnet.from_subnet_id(self, f"Subnet{i}", subnet_id) 
+                             for i, subnet_id in enumerate(subnet_ids)]
+                )
+            else:
+                # Fall back to automatic selection (try private subnets first)
+                print("No subnet IDs provided, attempting automatic subnet selection...")
+                try:
+                    ecs_subnet_selection = ec2.SubnetSelection(
+                        subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
+                    )
+                    selected = pdf_processing_vpc.select_subnets(ecs_subnet_selection)
+                    if len(selected.subnets) > 0:
+                        print(f"Found {len(selected.subnets)} private subnets with NAT Gateway")
+                    else:
+                        raise ValueError("No private subnets with egress found")
+                except:
+                    print("WARNING: Could not find tagged private subnets, using one subnet per AZ")
+                    ecs_subnet_selection = ec2.SubnetSelection(one_per_az=True)
+        else:
+            # Create new VPC with Public and Private Subnets
+            print("No VPC ID provided, creating new VPC")
+            pdf_processing_vpc = ec2.Vpc(self, "PdfProcessingVpc",
+                max_azs=2,
+                nat_gateways=1,
+                subnet_configuration=[
+                    ec2.SubnetConfiguration(
+                        subnet_type=ec2.SubnetType.PUBLIC,
+                        name="PdfProcessingPublic",
+                        cidr_mask=24,
+                    ),
+                    ec2.SubnetConfiguration(
+                        subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS,
+                        name="PdfProcessingPrivate",
+                        cidr_mask=24,
+                    ),
+                ]
+            )
 
-        # VPC Endpoints for faster ECR image pulls (reduces cold start by 10-15s)
-        pdf_processing_vpc.add_interface_endpoint("EcrApiEndpoint",
-            service=ec2.InterfaceVpcEndpointAwsService.ECR
-        )
-        pdf_processing_vpc.add_interface_endpoint("EcrDockerEndpoint",
-            service=ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER
-        )
-        pdf_processing_vpc.add_gateway_endpoint("S3Endpoint",
-            service=ec2.GatewayVpcEndpointAwsService.S3
-        )
+            # VPC Endpoints for faster ECR image pulls (only add if creating new VPC)
+            pdf_processing_vpc.add_interface_endpoint("EcrApiEndpoint",
+                service=ec2.InterfaceVpcEndpointAwsService.ECR
+            )
+            pdf_processing_vpc.add_interface_endpoint("EcrDockerEndpoint",
+                service=ec2.InterfaceVpcEndpointAwsService.ECR_DOCKER
+            )
+            pdf_processing_vpc.add_gateway_endpoint("S3Endpoint",
+                service=ec2.GatewayVpcEndpointAwsService.S3
+            )
+            
+            # For new VPCs, explicitly use private subnets with egress
+            ecs_subnet_selection = ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PRIVATE_WITH_EGRESS
+            )
+            print("Using newly created private subnets with NAT Gateway")
 
         # ECS Cluster
         pdf_remediation_cluster = ecs.Cluster(self, "PdfRemediationCluster", vpc=pdf_processing_vpc)
