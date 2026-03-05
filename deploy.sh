@@ -116,8 +116,13 @@ deploy_backend_solution() {
         # VPC Configuration
         print_status "🌐 VPC Configuration..."
         echo ""
+        print_warning "⚠️  SAFETY CHECK ENABLED: VPC_ID is currently REQUIRED for deployment"
+        echo "The code has been modified to prevent accidental VPC creation during testing."
+        echo ""
         echo "Would you like to use an existing VPC? (Recommended to avoid creating new NAT Gateway)"
-        echo "If you choose 'no', a new VPC will be created (~$32-40/month for NAT Gateway)"
+        echo "If you choose 'no', deployment will FAIL (safety check active)"
+        echo ""
+        print_status "To allow new VPC creation later, remove the safety check from app.py (lines ~63-68)"
         echo ""
         
         while true; do

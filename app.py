@@ -21,6 +21,12 @@ import platform
 import datetime
 import os
 
+# ============================================================================
+# SAFETY CHECK ACTIVE: VPC_ID is currently REQUIRED (lines ~63-68)
+# This prevents accidental VPC creation during initial testing.
+# To allow new VPC creation, remove the safety check block in PDFAccessibility.__init__
+# ============================================================================
+
 class PDFAccessibility(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
         super().__init__(scope, construct_id, **kwargs)
@@ -60,6 +66,15 @@ class PDFAccessibility(Stack):
         # Check if VPC_ID is provided as a context variable
         vpc_id = self.node.try_get_context("vpc_id")
         subnet_ids_str = self.node.try_get_context("subnet_ids")
+        
+        # Safety check: Require VPC_ID to be explicitly provided
+        # Remove this check once you've tested with existing VPC and want to allow new VPC creation
+        if not vpc_id:
+            raise ValueError(
+                "VPC_ID is required! Please provide an existing VPC ID.\n"
+                "Run deploy.sh and answer 'yes' when asked about using an existing VPC.\n"
+                "To allow new VPC creation, remove this safety check from app.py (lines ~63-68)"
+            )
         
         if vpc_id:
             # Use existing VPC
