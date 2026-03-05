@@ -19,6 +19,7 @@ from aws_cdk import (
 from constructs import Construct
 import platform
 import datetime
+import os
 
 class PDFAccessibility(Stack):
     def __init__(self, scope: Construct, construct_id: str, **kwargs) -> None:
@@ -531,5 +532,21 @@ class PDFAccessibility(Stack):
         )
 
 app = cdk.App()
-PDFAccessibility(app, "PDFAccessibility")
+
+# Get account and region from environment or CDK context
+# Required for VPC lookup functionality
+account = app.node.try_get_context('account') or os.environ.get('CDK_DEFAULT_ACCOUNT')
+region = app.node.try_get_context('region') or os.environ.get('CDK_DEFAULT_REGION')
+
+# Validate that account and region are available for VPC lookup
+if not account or not region:
+    raise ValueError(
+        "Account and region must be specified for VPC lookup. "
+        "Set CDK_DEFAULT_ACCOUNT and CDK_DEFAULT_REGION environment variables, "
+        "or pass --context account=ACCOUNT --context region=REGION"
+    )
+
+env = cdk.Environment(account=account, region=region)
+
+PDFAccessibility(app, "PDFAccessibility", env=env)
 app.synth()
