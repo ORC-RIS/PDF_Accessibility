@@ -39,6 +39,7 @@ All work produced is open source. More information can be found in the GitHub re
 | [Testing Your PDF Accessibility Solution](#testing-your-pdf-accessibility-solution) | User guide for the working solution                     |
 | [PDF-to-PDF Remediation Solution](#pdf-to-pdf-remediation-solution)                 | PDF format preservation solution details                |
 | [PDF-to-HTML Remediation Solution](#pdf-to-html-remediation-solution)               | HTML conversion solution details                        |
+| [Deploying with an Existing VPC](#deploying-with-an-existing-vpc)                   | Use your own VPC instead of creating a new one          |
 | [Configuring Limits](docs/CONFIGURING_LIMITS.md)                                   | How to modify document limits, quotas, and defaults     |
 | [Monitoring](#monitoring)                                                           | System monitoring and observability                     |
 | [Troubleshooting](#troubleshooting)                                                 | Common issues and solutions                             |
@@ -97,8 +98,9 @@ The script will guide you through:
 2. **Solution-Specific Setup**:
    - **PDF-to-PDF**: Enter Adobe API credentials (stored securely in AWS Secrets Manager)
    - **PDF-to-HTML**: Automatic creation of Bedrock Data Automation project
-3. **Automated Deployment**: Real-time monitoring of the deployment progress
-4. **Optional UI Deployment**: After successful deployment of your chosen solution(s), you'll have the option to deploy a user interface as well
+3. **VPC Configuration** (PDF-to-PDF only): Choose to create a new VPC or [use an existing one](#deploying-with-an-existing-vpc)
+4. **Automated Deployment**: Real-time monitoring of the deployment progress
+5. **Optional UI Deployment**: After successful deployment of your chosen solution(s), you'll have the option to deploy a user interface as well
 
 **Step 4: Test Your Deployment**
 
@@ -161,6 +163,18 @@ After successful deployment, the script provides specific testing instructions f
    - **`images/` folder**: Extracted images with generated alt text
    - **`remediation_report.html`**: Detailed report of accessibility improvements made
    - **`usage_data.json`**: Processing metrics and usage statistics
+
+### Deploying with an Existing VPC
+
+If you already have a VPC with private subnets and internet connectivity (via NAT Gateway or VPC Endpoints), you can deploy the PDF-to-PDF solution into your existing infrastructure instead of creating a new VPC. This avoids duplicate NAT Gateway costs and keeps resources within your network boundaries.
+
+**Requirements for your existing VPC:**
+- At least 2 private subnets in different Availability Zones
+- Internet access from private subnets (NAT Gateway or VPC Endpoints for ECR, S3, and Bedrock)
+
+During deployment, the script will display your available subnets and prompt you for the private subnet IDs to use.
+
+For detailed instructions, see the [Complete Deployment Guide: Using Existing VPC](DEPLOYMENT_WITH_EXISTING_VPC_GUIDE.md).
 
 ### Advanced Usage
 
