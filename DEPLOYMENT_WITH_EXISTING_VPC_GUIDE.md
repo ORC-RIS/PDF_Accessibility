@@ -85,7 +85,6 @@ Ensure you have:
 3. **Adobe PDF Services API credentials**:
    - Client ID
    - Client Secret
-   - Get from: https://acrobatservices.adobe.com/
 
 ### Step 2: Find Your Private Subnet IDs
 
@@ -116,7 +115,7 @@ aws ec2 describe-route-tables \
 
 ```bash
 # Clone the repository
-git clone https://github.com/ASUCICREPO/PDF_Accessibility.git
+git clone https://github.com/ORC-RIS/PDF_Accessibility.git
 cd PDF_Accessibility
 
 # Make deployment script executable
@@ -524,4 +523,3 @@ aws secretsmanager delete-secret --secret-id /myapp/client_credentials --force-d
 - No new VPC infrastructure
 - Pay only for processing resources
 
-The solution is now ready to process PDFs and make them accessible!
